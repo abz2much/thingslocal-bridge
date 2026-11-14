@@ -30,8 +30,8 @@ remain unavailable; a write timeout has an unknown outcome and is not retried.
 Separate opt-ins add a **Start** button (`"dishwasher_start": true`) and option
 controls (`"dishwasher": ["sanitize", "speed_booster", "selected_zone",
 "door_release", "mute", "pause", "resume", "cancel"]`). Both were proven on one
-DW60A8050FS/EF; see the
-repository README. After changing the app's code, rebuild the local app; a
+DW60A8050FS/EF; see
+docs/controls.md in the repository. After changing the app's code, rebuild the local app; a
 restart is enough for a configuration change.
 
 For panel/phone notifications, install the

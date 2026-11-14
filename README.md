@@ -1,419 +1,104 @@
 # ThingsLocal Bridge
 
-**Continued work on [LocalThings](https://codeberg.org/purplesym/localthings) by
-[purplesym (Lars)](https://codeberg.org/purplesym) and the LocalThings contributors.**
+Keep a Samsung SmartThings appliance working in Home Assistant without Samsung's
+cloud. The bridge is a small local MQTT endpoint. You re-point the appliance at it,
+and its readings show up in Home Assistant through the standard MQTT integration.
+A dishwasher can also be controlled.
 
-The original MQTT implementation and protocol research are the foundation of
-this project. Its MQTT source is included unmodified, with the original copyright
-notices and AGPL-3.0-or-later license preserved. This continuation adds Home
-Assistant packaging, guided setup, multi-appliance monitoring, optional dishwasher
-program selection and notification routing. See [UPSTREAM.md](UPSTREAM.md) for
-the original sources and the changes made here.
+This is an experimental community project. It is not affiliated with Samsung or
+SmartThings.
 
-This repository continues [jmguzik's ThingsLocal Bridge](https://github.com/jmguzik/thingslocal-bridge),
-which is itself a continuation of LocalThings. Their credit, and the original
-authors', stay in place.
+## What it does
 
-**Local monitoring for compatible SmartThings STDK MQTT appliances, with optional
-dishwasher program selection.**
+- **Readouts** for a cooktop and a dishwasher, plus a generic profile. Values are
+  what the appliance reports. A missing value shows as unavailable, never as zero.
+- **Several appliances** on one endpoint, each with its own identity, registration
+  and Home Assistant device.
+- **Dishwasher controls**, all opt-in: program selection, Start, Pause, Resume,
+  Cancel, Sanitize, Speed booster, Selected zone, auto door release and mute.
+- **Dishwasher notifications** for device messages and cleaning reminders, through
+  a blueprint.
 
-Run one local endpoint for several appliances and expose their reported values
-through the standard Home Assistant MQTT integration. Device identities,
-registration, state sessions and discovery namespaces remain separate.
-Appliances are read-only by default. Program selection is an explicit per-device
-opt-in for dishwashers; it does not start a wash. Remote start is a separate
-opt-in for dishwashers, confirmed on one real dishwasher (DW60A8050FS/EF) on
-14 November 2026. Option controls (Sanitize, Speed booster, Selected zone, auto
-door release, mute) are a third opt-in, proven on the same machine.
+Appliances are read-only until you turn a control on. See
+[docs/controls.md](docs/controls.md).
 
-This is an experimental community project, unaffiliated with Samsung or
-SmartThings. It uses [purplesym's LocalThings](https://codeberg.org/purplesym/localthings)
-MQTT implementation and [documented EasySetup protocol](https://6xq.net/localthings/).
-See [UPSTREAM.md](UPSTREAM.md) and LICENSE for source and attribution.
+## Does it work with my appliance?
 
-## Scope and compatibility
-
-The supported path is **STDK MQTT with SoftAP EasySetup 1.x**. A SmartThings label
-or the term "Direct Connected" alone does not establish compatibility. This
-project does not implement OCF/CoAP, Zigbee, Z-Wave or Bluetooth onboarding.
+The supported path is STDK MQTT with SoftAP EasySetup 1.x. A SmartThings label or
+the words "Direct Connected" do not prove compatibility. There is no support for
+OCF/CoAP, Zigbee, Z-Wave or Bluetooth onboarding.
 
 | Appliance | Evidence |
 | --- | --- |
-| Samsung NZ64B5046KK, STDK 1.7.4 | Fresh cloud-key acquisition, ownership-verified SoftAP onboarding, local TLS/MQTT registration and twenty read-only telemetry entities verified in the new multi-device installation. |
-| Samsung dishwasher reporting DW8500-AM | Fresh Samsung login/key acquisition, ownership-verified SoftAP onboarding, local TLS/MQTT registration and ten read-only telemetry entities verified with an empty runtime registry and new HA namespace. |
-| Other models | Unverified; matching the protocol and supplying a supported profile/explicit mappings are required. |
+| Samsung DW60A8050FS/EF dishwasher | Paired from a Mac. Readouts and every control above worked on 14 November 2026. |
+| Samsung NZ64B5046KK cooktop | Onboarded, with twenty read-only entities verified. |
+| Samsung dishwasher reporting DW8500-AM | Onboarded, with ten read-only entities verified. |
+| Anything else | Untested. |
 
-A cooktop and dishwasher profile are included. The generic profile exposes a
-small explicit list of standard read-only attributes. Additional scalar
-attributes require an explicit allowlist in the device configuration. Unknown
-attributes are catalogued by **name/type/unit only**, without their values.
+Full detail is in [docs/hardware-validation.md](docs/hardware-validation.md).
 
-## What you must supply
+## What you need
 
-- **Your own registered domain name** and control of its DNS records.
-- **Your own valid TLS certificate for the broker hostname**, matching private key
-  and intermediate chain. **RapidSSL was tested successfully**, using
-  `RapidSSL TLS RSA CA G1 → DigiCert Global Root G2`, with an RSA 2048-bit key.
-  A self-signed certificate was rejected by the tested cooktop. Other issuers,
-  roots and key types have not been established as compatible.
-- A local DNS override from that name to your endpoint's reserved LAN IP.
-  **The endpoint can remain entirely local**: public hosting and Internet port
-  forwarding are not required. One hostname/certificate serves all appliances
-  using this endpoint and compatible with its certificate chain.
-- Your appliances' own SmartThings QR data, or verified manual manufacturer,
-  setup ID and serial. **There is no default or guessed setup ID.**
-- A Samsung account for initial EasySetup material and a WPA2 Wi-Fi network
-  visible to the appliance. Setup/cloud credentials stay on the setup computer;
-  routine monitoring does not call the SmartThings API.
-- A Linux setup computer with NetworkManager, a Wi-Fi adapter, a systemd user
-  session, Python 3.11+, OpenSSL 3, and Node.js/npm for the optional official login.
-  A Mac can also be the setup computer for the pairing step: see
-  [macOS setup computer](#macos-setup-computer).
-- Home Assistant OS, access to its local-apps/share folders, and a working HA MQTT
-  integration/broker. The official Mosquitto app is a suitable choice.
-- DHCP reservations for the endpoint and **every** appliance.
+- A domain name you own, and a valid TLS certificate for a hostname on it. The
+  appliance rejects self-signed certificates. RapidSSL through DigiCert Global Root
+  G2 was tested.
+- Local DNS that points that hostname at the bridge's LAN IP. Nothing is exposed to
+  the Internet.
+- Home Assistant OS with an MQTT broker.
+- A Samsung account, once, to fetch each appliance's setup keys.
+- A Linux or macOS computer for setup and pairing.
 
-Certificate renewal is manual. Renew before expiry, replace the private files
-and restart the app. Expiry is exposed as a diagnostic HA entity.
+## Quick start
 
-## First installation
-
-Start from a checkout of this repository:
-
-```sh
-git clone https://github.com/abz2much/thingslocal-bridge.git
-cd thingslocal-bridge
-```
-
-All commands below run on the Linux
-setup computer unless stated otherwise. Replace example paths with your own.
-
-### 1. Install the setup CLI into a new environment
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[setup]'
-.venv/bin/thingslocal --workspace ~/.config/thingslocal init
-```
-
-The wizard asks for your domain, reserved endpoint IP, certificate/key paths,
-HA MQTT credentials, target Wi-Fi credentials and timezone. Passwords are entered
-with a hidden prompt. Private files use mode 0600 inside a mode-0700 workspace.
-Do not put the workspace or an exported private runtime bundle in a public repo.
-
-### 2. Sign into your own Samsung account and add appliances
-
-```sh
-.venv/bin/thingslocal --workspace ~/.config/thingslocal login --install-cli
-.venv/bin/thingslocal --workspace ~/.config/thingslocal cloud-devices
-.venv/bin/thingslocal --workspace ~/.config/thingslocal add-device
-.venv/bin/thingslocal --workspace ~/.config/thingslocal keys YOUR_DEVICE_ID
-```
-
-`login --install-cli` downloads the pinned official SmartThings CLI login support.
-Authentication opens Samsung's browser flow. If the browser does not appear,
-open the printed `http://localhost:PORT/start` link **on the same computer**.
-The callback is bound to loopback. Credentials are saved privately and not printed.
-A generic HA integration/PAT token may lack the Samsung identity needed by
-EasySetup; use the official Samsung user login when the API reports this problem.
-
-`add-device` accepts the URL from your own QR or explicit manual identity. Choose
-a unique ID, reserved IP, display name, registration label and profile (`cooktop`,
-`dishwasher`, or `generic`). Repeat `add-device` and `keys` for additional appliances.
-Changing a display name later does not require changing the identity or label.
-
-`keys` makes a **new** cloud-assisted key request and verifies the complete serial
-hash in the response. Keep the resulting `setup-material` files private. To use
-material you already own, `keys YOUR_DEVICE_ID --import-file FILE` is available,
-but a test using this option is **not** a fresh cloud-key acquisition test.
-
-### 3. Prepare Home Assistant and the private runtime bundle
-
-Install/configure your regular MQTT broker and the standard MQTT integration.
-Create a dedicated broker login for this bridge. The bridge needs publication
-access to its `thingslocal/...` state topics and `homeassistant/.../config`
-discovery topics, plus subscription access to `homeassistant/status`. Dishwashers
-also subscribe to their own `thingslocal/DEVICE_IDENTIFIER/notification_ack`
-topic. An enabled program selector subscribes to its own
-`thingslocal/DEVICE_IDENTIFIER/command/washing_program` topic.
-
-The appliance endpoint occupies host TCP port **8883**. Disable Mosquitto's
-host-side 8883 mapping to avoid a conflict. When both clients run inside HA,
-Mosquitto's host-side ports can all be disabled and `core-mosquitto:1883` used
-through the internal app network.
-
-```sh
-.venv/bin/thingslocal --workspace ~/.config/thingslocal export-runtime \
-  --output /path/to/empty-private-export \
-  --target-workspace /share/thingslocal
-```
-
-This exports only runtime configuration, your certificate and private key.
-**It does not copy Wi-Fi credentials, Samsung tokens, EasySetup keys or an old
-registration.** The target path must match the app's `workspace` option.
-
-Copy the exported files into HA's `share/thingslocal` directory, preserving
-private access. Do not put them in `www`, the local app source or a Git checkout.
-
-### 4. Install the Home Assistant app
-
-Add this repository under **Settings → Apps → Install app → Repositories**:
-
-```text
-https://github.com/abz2much/thingslocal-bridge
-```
+1. Install the setup tool and run `init`.
+2. Sign in to Samsung, add each appliance and fetch its keys.
+3. Export the runtime bundle and copy it to Home Assistant's `share` folder.
+4. Add this repository to Home Assistant, install the app and start it.
+5. Point your local DNS at the bridge and run `check`.
+6. Put the appliance in its pairing mode and run `pair`.
 
 [![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fabz2much%2Fthingslocal-bridge)
 
-Install **ThingsLocal Bridge** from that repository. Set its `workspace` option to
-the private runtime directory prepared above, then start it and enable
-start-on-boot/watchdog. This app is installed through HA's app store; HACS is not
-required.
+The exact commands are in [docs/setup.md](docs/setup.md).
 
-For a local development installation instead:
+## Things to know
 
-Copy **only** this repository's `thingslocal_bridge/` directory into HA's
-`local_apps/thingslocal_bridge` folder. Current HA exposes this through Samba or
-as `/local_apps` in the Terminal & SSH app. Older releases may call it `addons`.
-See the [official local-app tutorial](https://contributors.home-assistant.io/apps/first-app/).
+- Certificate renewal is manual. Expiry shows as a diagnostic entity.
+- The endpoint uses host port 8883, so turn off Mosquitto's host mapping for it.
+- Samsung's cloud monitoring may stop once an appliance points at your bridge.
+- The protocol checks the appliance's IP and token claims but not the token
+  signature. Keep the endpoint on a trusted private network.
+- Setup secrets stay on the setup computer. Never put the workspace, keys or the
+  runtime bundle in a public repository.
 
-In HA, open **Settings → Apps → Install app → Check for updates**. Under Local
-apps, install **ThingsLocal Bridge**. Set its `workspace` option to the private
-runtime directory, then start it and enable start-on-boot/watchdog.
+## Documentation
 
-The app can run before appliance onboarding, with an empty registry. Its log
-should report `thingslocal_ready`. It creates certificate diagnostics in HA;
-other entities appear as their whitelisted attributes are reported.
+| Page | What is in it |
+| --- | --- |
+| [docs/setup.md](docs/setup.md) | Step by step install and pairing, including macOS |
+| [docs/controls.md](docs/controls.md) | Dishwasher controls, commands and results |
+| [docs/configuration.md](docs/configuration.md) | `config.json`, extra attributes, hiding entities |
+| [docs/notifications.md](docs/notifications.md) | The notification blueprint |
+| [docs/recovery.md](docs/recovery.md) | Backups, rollback and moving a registry |
+| [docs/hardware-validation.md](docs/hardware-validation.md) | What was tested, and what was not |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
 
-### 5. Set up local DNS and check routing before pairing
-
-Configure your local DNS so your broker hostname resolves **only** to the
-reserved private endpoint IP, and advertise that DNS through DHCP. Reserve each
-appliance IP used by the configuration.
-
-```sh
-.venv/bin/thingslocal --workspace ~/.config/thingslocal check
-```
-
-The check validates hostname, trusted certificate chain, key match, expiry, exact
-private DNS resolution and endpoint TCP reachability. It also rejects any
-additional IPv6/AAAA address: this endpoint is IPv4-only. Certificate validation
-uses DigiCert Global Root G2; other trust bundles require explicit configuration
-and separate device verification.
-
-### 6. Put one appliance into its documented AP mode and pair it
-
-Use the manufacturer's procedure for the **particular model**. Button sequences
-are not universal. Keep the computer connected to its normal home network first.
-
-```sh
-.venv/bin/thingslocal --workspace ~/.config/thingslocal scan YOUR_DEVICE_ID
-.venv/bin/thingslocal --workspace ~/.config/thingslocal pair YOUR_DEVICE_ID
-```
-
-Select a Wi-Fi adapter with `pair YOUR_DEVICE_ID --interface INTERFACE` if needed.
-The tool verifies the AP's identity and complete serial hash before sending
-Wi-Fi credentials. It performs encrypted EasySetup, restores the computer's
-original connection and removes its temporary AP profile. An independent
-120-second systemd user timer also attempts restoration if the process crashes.
-A timeout after a configuration write is reported as **unknown**, not unchanged.
-
-Onboarding points the appliance at your local endpoint instead of its previous
-broker. Its cloud-app monitoring may consequently stop. By default the project
-exposes only readouts. The optional dishwasher program selector is described below.
-
-Repeat pairing for each configured appliance. Use an existing workspace to add
-devices: export the updated configuration into a new empty export directory,
-copy those files over the runtime configuration, **preserve the HA `state/`
-folder**, restart the app and then pair the added appliance.
-
-#### macOS setup computer
-
-On a Mac, `pair` works with a **manual join**. The tool does not change your
-Wi-Fi itself. It needs no `sudo`, no extra packages and no Location permission.
-This path worked once on a real Mac with a DW60A8050FS/EF dishwasher (14 November 2026).
-Other Macs and models are unconfirmed.
-
-1. Put the appliance in its pairing mode, as above.
-2. Run `pair YOUR_DEVICE_ID`. If you have more than one Wi-Fi interface, add
-   `--interface en0` (or the right name).
-3. The tool tells you to join the appliance's setup network from the Wi-Fi
-   menu. Its name has `_E4` or `_E5` in it. The password is
-   `1111122222`. Ignore any "no internet" warning.
-4. Press Enter in the terminal.
-5. The tool checks that the router answers on port 8888. If it does not, it
-   says so and stops. It sends nothing.
-6. After pairing, the appliance's network goes away. The tool waits up to 60
-   seconds for your normal network to return. If it does not, choose your
-   Wi-Fi from the menu yourself.
-
-`scan` is not supported on macOS. Look for the appliance's network in the
-Wi-Fi menu instead.
-
-## Readouts and availability
-
-- Each configured appliance has its own HA device, registration and state session.
-- The cooktop profile includes reported power, operating/heating state, zone
-  settings/modes, timers, residual heat and panel lock.
-- The dishwasher profile includes reported power, machine/job states, program,
-  progress, remaining time and completion timestamp where actually supplied.
-- Values are settings reported by the appliance, not proof of electrical power
-  consumption or physical heat delivery.
-- A new connection clears previous field values. Each entity remains unavailable
-  until its own fresh value arrives; missing data never becomes zero/off.
-- Components listed in a device's `optional_components` are disabled by default
-  in HA. Do not assume burner IDs correspond to physical positions.
-- Unknown attributes appear in a private metadata catalog. `catalog DEVICE_ID
-  --state-dir DIR` prints its names/types/units, not raw values. Additional scalar
-  mappings are described in [configuration.md](docs/configuration.md).
-
-The endpoint keeps a durable registry and bounded rotating logs. HA MQTT outages
-are retried independently; snapshots are coalesced instead of queued indefinitely.
-The upstream protocol checks source IP and JWT identity claims but does not
-verify appliance JWT signatures. Keep the endpoint on a trusted private LAN.
-
-## Optional dishwasher program selection
-
-For a dishwasher profile, `add-device` asks whether to enable program selection;
-the default answer is **no**. For an existing dishwasher, add this to its private
-device configuration, then deploy the updated runtime configuration and restart
-the app while preserving its `state/` directory:
-
-```json
-{"controls": {"dishwasher_course": true}}
-```
-
-Home Assistant adds a **Washing program** dropdown and a **Program selection
-result** diagnostic to that appliance. The dropdown uses only the supported
-programs reported by the device. It works through the standard MQTT select UI
-on a computer or phone; no custom card is needed. Existing telemetry entities
-keep their identifiers.
-
-Selection is available only with fresh session data showing power on, operating
-state `ready`, job state `none`, a known selected program and a live command
-subscription. It becomes unavailable during a pending change, while busy/off,
-or after disconnect. Normal telemetry remains available independently.
-
-The only permitted command is `samsungce.dishwasherWashingCourse.setWashingCourse`.
-**It selects a program without starting a wash.** Program selection has no start,
-pause, cancel, power or cooktop controls. The displayed selection follows device reports,
-not a predicted result. A request waits up to ten seconds for a fresh matching
-report. A timeout means **outcome unknown**; the selector then waits for another
-program report or a fresh connection before accepting more requests.
-
-Command messages use QoS 0, clean MQTT sessions and `retain: false`. Retained
-replays are rejected, and commands are not retried or saved for reconnection.
-Only one request per appliance can be pending. Check the diagnostic if a request
-is rejected or not confirmed. Do not automatically repeat unknown-outcome requests.
-
-Set the flag to `false` or remove it and restart to return the device to read-only
-operation. Its command subscription and selector discovery are then removed.
-
-## Optional dishwasher remote start
-
-Remote start is a second, separate opt-in for dishwashers:
-
-```json
-{"controls": {"dishwasher_start": true}}
-```
-
-It adds a **Start** button and a **Start result** diagnostic in Home Assistant.
-It sends one command, `dishwasherOperatingState.setMachineState("run")`, and only when the
-dishwasher has reported remote control as enabled in the current connection. The
-dishwasher's own remote control setting must be armed at the machine. There is no
-stop, cancel, pause, resume or power command, and nothing for cooktops.
-
-**Confirmed on one DW60A8050FS/EF (14 November 2026): it started a wash.** The
-appliance sends no acknowledgement, so the result is `sent_unconfirmed`, never
-"started". Starting an appliance unattended is your responsibility. See
-`docs/configuration.md` for the guard, the result values and the first-test steps.
-
-## Optional dishwasher option controls
-
-A third opt-in lists the controls to enable, by name:
-
-```json
-{"controls": {"dishwasher": ["sanitize", "speed_booster", "selected_zone", "door_release", "mute"]}}
-```
-
-| Name | Home Assistant entity | What it sends |
-| --- | --- | --- |
-| `sanitize` | switch | `setOptions` with `{"sanitize": true or false}` |
-| `speed_booster` | switch | `setOptions` with `{"speedBooster": true or false}` |
-| `selected_zone` | select (`all`, `lower`) | `setOptions` with `{"selectedZone": "..."}` |
-| `door_release` | switch | `autoDoorRelease` `enable` or `disable` |
-| `mute` | switch | `audioMute` `mute` or `unmute` |
-| `pause` | button | `dishwasherOperatingState` `setMachineState` `["pause"]` |
-| `resume` | button | `dishwasherOperatingState` `setMachineState` `["run"]` |
-| `cancel` | button | `samsungce.dishwasherOperation` `cancel` (ends the wash; the dishwasher drains) |
-
-The three option controls work only while the dishwasher is on and idle, and only
-for values the current wash course allows (the dishwasher reports what is settable).
-Door release and mute need only a live connection. This dishwasher reports them
-only after they change, so they show no state until the first change. Only one command may be pending
-at a time and nothing is queued or retried. The dishwasher does not acknowledge
-commands, so a change counts as done only when its next report shows it. A
-**Control result** diagnostic shows the last result, for example `confirmed` or
-`not_settable`. Plain topics are also published for other tools:
-`<namespace>/<device id>/<name>` for state (`ON` or `OFF`, or the option) and
-`<namespace>/<device id>/<name>/set` for commands (QoS 0, not retained).
-
-The three buttons are available only while the dishwasher is in the right state
-(pause while running, resume while paused, cancel while running or paused) **and
-remote control is reported on**. This dishwasher reports remote control only after it
-is changed at the machine, so after an app restart the buttons stay unavailable until
-then. A press counts as done when the operating state reaches paused, running or
-ready. Cancel ends a wash, so you may want Home Assistant to ask for confirmation.
-
-**Proven on one DW60A8050FS/EF (14 November 2026).** The single setters
-(`setSanitize` and the others) are ignored by this dishwasher; only `setOptions`
-works. Options worked with remote control off. Other models are unconfirmed.
-Pause, resume and cancel were proven by command; the buttons themselves are new. Delayed start (`startLater`, in seconds) and power are not controls yet.
-
-## Dishwasher attention and cleaning notifications
-
-Dishwasher profiles expose reported device messages, a reported-attention flag,
-the cleaning count/threshold and a derived cleaning recommendation. Missing data
-remains unavailable. A recommendation needs both a fresh local cycle count and
-a positive threshold. A threshold alone does not establish whether cleaning is due.
-
-The included [notification blueprint](blueprints/dishwasher_notifications.yaml)
-routes messages to the HA notification panel and any explicitly configured phone
-notify services. It does not require a Samsung cloud API connection. Installation,
-first-use acknowledgement initialization and delivery limits are described in
-[notifications.md](docs/notifications.md).
-
-## Clean testing and recovery
-
-A clean test uses a new setup workspace, a new installation ID, **empty** runtime
-state/registry and a distinct MQTT namespace/HA unique IDs. It must not adopt old
-registrations or use old retained values as evidence. Reusing owned domain/TLS
-and network infrastructure is allowed and must be stated separately.
-
-Fresh cloud-key acquisition and explicit key import are different test paths.
-Do not describe an imported cached key as newly obtained from Samsung.
-
-Before changing a working installation, back it up. After a new onboarding, the
-appliance may know a **new device ID**: restoring only the old registry is not a
-complete rollback. See [recovery.md](docs/recovery.md) for validated registry
-migration or a new ownership-verified onboarding to the previous endpoint.
-
-## Tests and publishing
+## Tests
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Unit tests cover different appliances/networks, identity and AP checks, multi-device
-registration/IP isolation, read-only discovery, state invalidation, private export
-and recovery. They also cover opt-in program controls, connection generations,
-retained replay rejection, fresh confirmations and the durable notification queue.
-Hardware verification is recorded separately; synthetic tests do
-not establish compatibility with every SmartThings device.
+The tests use fake appliances and do not prove compatibility with real ones.
+Hardware results are recorded in the validation page.
 
-See [hardware-validation.md](docs/hardware-validation.md) for the tested scope and
-remaining checks.
+## Credits and licence
 
-Before publishing, review the complete tracked tree and history. Exclude all
-private workspaces, tokens, setup keys, runtime registry and user private keys.
-The vendored MQTT source and attribution must remain available under its license.
+This project continues [jmguzik's ThingsLocal Bridge](https://github.com/jmguzik/thingslocal-bridge),
+which continues [LocalThings](https://codeberg.org/purplesym/localthings) by
+[purplesym (Lars)](https://codeberg.org/purplesym) and its contributors. The
+protocol research is at [6xq.net/localthings](https://6xq.net/localthings/). The
+original MQTT source is included unmodified, with its copyright notices.
+
+Licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE) and
+[UPSTREAM.md](UPSTREAM.md) for sources and what changed.
