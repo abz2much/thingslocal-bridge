@@ -38,8 +38,10 @@ Only one endpoint may listen on host port 8883; disable Mosquitto's host-side
 
 The app publishes standard HA MQTT sensor/binary_sensor discovery. Only an
 explicitly enabled dishwasher subscribes to its own program-selection command
-topic and exposes a select entity. There are no start, pause, cancel, power or
-cooktop controls. It reports each attribute's availability
+topic and exposes a select entity. Separate opt-ins add a Start button and the
+option controls (Sanitize, Speed booster, Selected zone, auto door release, mute),
+proven on one dishwasher. There are no pause, cancel, power or cooktop controls.
+It reports each attribute's availability
 independently. Missing data never becomes zero/off. Unknown attributes are not
 automatically published; they require an explicit read-only mapping.
 

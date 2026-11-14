@@ -27,6 +27,11 @@ Devices are read-only by default. A dishwasher can explicitly enable
 **Washing program** select is available only while fresh reports show the appliance
 powered on and idle. Selecting a program does not start a wash. Missing values
 remain unavailable; a write timeout has an unknown outcome and is not retried.
+Separate opt-ins add a **Start** button (`"dishwasher_start": true`) and option
+controls (`"dishwasher": ["sanitize", "speed_booster", "selected_zone",
+"door_release", "mute"]`). Both were proven on one DW60A8050FS/EF; see the
+repository README. After changing the app's code, rebuild the local app; a
+restart is enough for a configuration change.
 
 For panel/phone notifications, install the
 [notification blueprint](https://github.com/jmguzik/thingslocal-bridge/blob/main/blueprints/dishwasher_notifications.yaml)
