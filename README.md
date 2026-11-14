@@ -10,6 +10,10 @@ Assistant packaging, guided setup, multi-appliance monitoring, optional dishwash
 program selection and notification routing. See [UPSTREAM.md](UPSTREAM.md) for
 the original sources and the changes made here.
 
+This repository continues [jmguzik's ThingsLocal Bridge](https://github.com/jmguzik/thingslocal-bridge),
+which is itself a continuation of LocalThings. Their credit, and the original
+authors', stay in place.
+
 **Local monitoring for compatible SmartThings STDK MQTT appliances, with optional
 dishwasher program selection.**
 
@@ -77,7 +81,7 @@ and restart the app. Expiry is exposed as a diagnostic HA entity.
 Start from a checkout of this repository:
 
 ```sh
-git clone https://github.com/jmguzik/thingslocal-bridge.git
+git clone https://github.com/abz2much/thingslocal-bridge.git
 cd thingslocal-bridge
 ```
 
@@ -156,10 +160,10 @@ private access. Do not put them in `www`, the local app source or a Git checkout
 Add this repository under **Settings → Apps → Install app → Repositories**:
 
 ```text
-https://github.com/jmguzik/thingslocal-bridge
+https://github.com/abz2much/thingslocal-bridge
 ```
 
-[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fjmguzik%2Fthingslocal-bridge)
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fabz2much%2Fthingslocal-bridge)
 
 Install **ThingsLocal Bridge** from that repository. Set its `workspace` option to
 the private runtime directory prepared above, then start it and enable

@@ -4,9 +4,9 @@ ThingsLocal Bridge continues **LocalThings by
 [purplesym (Lars)](https://codeberg.org/purplesym)** and the LocalThings contributors.
 The original MQTT implementation is included unmodified. See
 [upstream](https://codeberg.org/purplesym/localthings) and
-[attribution](https://github.com/jmguzik/thingslocal-bridge/blob/main/UPSTREAM.md).
+[attribution](https://github.com/abz2much/thingslocal-bridge/blob/main/UPSTREAM.md).
 
-Follow the [first-installation guide](https://github.com/jmguzik/thingslocal-bridge#first-installation)
+Follow the [first-installation guide](https://github.com/abz2much/thingslocal-bridge#first-installation)
 before pairing any appliance. Each owner needs their own domain, compatible TLS
 certificate, local DNS override, verified appliance identities and reserved IPs.
 RapidSSL through DigiCert Global Root G2 was tested. The endpoint can remain
@@ -29,16 +29,17 @@ powered on and idle. Selecting a program does not start a wash. Missing values
 remain unavailable; a write timeout has an unknown outcome and is not retried.
 Separate opt-ins add a **Start** button (`"dishwasher_start": true`) and option
 controls (`"dishwasher": ["sanitize", "speed_booster", "selected_zone",
-"door_release", "mute"]`). Both were proven on one DW60A8050FS/EF; see the
+"door_release", "mute", "pause", "resume", "cancel"]`). Both were proven on one
+DW60A8050FS/EF; see the
 repository README. After changing the app's code, rebuild the local app; a
 restart is enough for a configuration change.
 
 For panel/phone notifications, install the
-[notification blueprint](https://github.com/jmguzik/thingslocal-bridge/blob/main/blueprints/dishwasher_notifications.yaml)
-and follow its [first-use acknowledgement setup](https://github.com/jmguzik/thingslocal-bridge/blob/main/docs/notifications.md).
+[notification blueprint](https://github.com/abz2much/thingslocal-bridge/blob/main/blueprints/dishwasher_notifications.yaml)
+and follow its [first-use acknowledgement setup](https://github.com/abz2much/thingslocal-bridge/blob/main/docs/notifications.md).
 Cleaning reminders need both a fresh cycle count and a positive threshold.
 
 Preserve the full private workspace, especially registration and notification
 state, on updates. Renew your certificate manually before expiry and restart the
 app after replacing its certificate/key. For recovery, follow
-[the recovery guide](https://github.com/jmguzik/thingslocal-bridge/blob/main/docs/recovery.md).
+[the recovery guide](https://github.com/abz2much/thingslocal-bridge/blob/main/docs/recovery.md).

@@ -7,6 +7,9 @@ are the foundation of this continuation. The original MQTT source is included
 unmodified, with its copyright notices and license preserved.
 
 - Source: https://codeberg.org/purplesym/localthings
+- Direct base of this repository: https://github.com/jmguzik/thingslocal-bridge (a
+  continuation of LocalThings). This repository is maintained separately; its changes
+  are listed in `CHANGELOG.md`.
 - Protocol/EasySetup documentation: https://6xq.net/localthings/
 - License: GNU Affero General Public License, version 3 or later.
 - Unmodified source included in `thingslocal_bridge/src/localthings/`.
