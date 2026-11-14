@@ -65,7 +65,7 @@ This adds a standard Home Assistant MQTT select with live `supportedCourses`
 options, a reported state and an independent readiness/availability topic. The
 selector sends only `setWashingCourse`, with one explicitly reported program as
 its argument. No arbitrary command or topic can be configured through this flag.
-See the README for readiness checks, confirmation and unknown-outcome handling.
+See [controls.md](controls.md) for readiness checks, confirmation and unknown-outcome handling.
 
 ## Remote control status and remote start
 
@@ -130,7 +130,7 @@ unattended is the owner's responsibility.
 The list is optional, may hold any of the names once each (`pause`, `resume` and
 `cancel` are buttons and also belong in it), and is accepted only for dishwasher
 profiles. Each name adds one Home Assistant entity (a switch, a select for
-`selected_zone`, or a button) plus the plain topics described in the README,
+`selected_zone`, or a button) plus the plain topics described in [controls.md](controls.md),
 and one shared **Control result** diagnostic. Results: `confirmed`, `pending`,
 `not_ready`, `busy`, `unchanged`, `unsupported_value`, `not_settable`,
 `timeout_unknown`, `send_failed_unknown`, `session_changed`, `disconnected`.

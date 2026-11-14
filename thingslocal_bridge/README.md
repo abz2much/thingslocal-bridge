@@ -18,7 +18,7 @@ can keep the endpoint entirely inside your home network, without public hosting
 or Internet port forwarding. Each appliance needs its own verified identity and
 reserved LAN IP. One endpoint/certificate is shared by compatible appliances.
 
-Use the setup computer CLI and the repository's first-installation README to:
+Use the setup computer CLI and the repository's setup guide (docs/setup.md) to:
 
 1. Create a private workspace with your network, TLS and MQTT settings.
 2. Sign into your own Samsung account and obtain each device's EasySetup material.
@@ -40,7 +40,7 @@ The app publishes standard HA MQTT sensor/binary_sensor discovery. Only an
 explicitly enabled dishwasher subscribes to its own program-selection command
 topic and exposes a select entity. Separate opt-ins add a Start button and the
 option controls (Sanitize, Speed booster, Selected zone, auto door release, mute),
-proven on one dishwasher. There are no pause, cancel, power or cooktop controls.
+proven on one dishwasher, along with Pause, Resume and Cancel buttons. There are no power or cooktop controls.
 It reports each attribute's availability
 independently. Missing data never becomes zero/off. Unknown attributes are not
 automatically published; they require an explicit read-only mapping.
