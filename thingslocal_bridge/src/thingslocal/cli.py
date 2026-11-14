@@ -161,10 +161,15 @@ def main():
                 result = (import_material(workspace, device, args.import_file) if args.import_file else
                           cloud.acquire_material(workspace, device, cloud.read_token(workspace, args.token_file)))
             elif args.command == 'scan':
-                from .network import scan
-                found = scan(selected(config, args.device)['identity'])
-                atomic_json(workspace / ('ap-scan-' + args.device + '.json'), found)
-                result = {'matching_access_points': len(found), 'private_details_saved': True}
+                from .network_macos import ScanUnsupported
+                from .network_select import backend
+                try:
+                    found = backend().scan(selected(config, args.device)['identity'])
+                except ScanUnsupported as unsupported:
+                    result = {'supported': False, 'message': str(unsupported)}
+                else:
+                    atomic_json(workspace / ('ap-scan-' + args.device + '.json'), found)
+                    result = {'matching_access_points': len(found), 'private_details_saved': True}
             elif args.command == 'pair':
                 from .provision import pair
                 result = pair(workspace, config, selected(config, args.device), args.interface)
