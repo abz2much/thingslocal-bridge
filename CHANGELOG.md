@@ -13,6 +13,7 @@
   dishwasher's next report. Plain MQTT topics and a "Control result" diagnostic
   are published alongside the Home Assistant entities.
 - Proven on one DW60A8050FS/EF (14 November 2026). Other models are unconfirmed.
+- A logo, shown in the README and as the Home Assistant app icon.
 - Documentation updated, including what was and was not proven on real hardware.
 
 ## 0.2.0 — 2026-11-10 — Experimental public release

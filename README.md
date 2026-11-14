@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="ThingsLocal Bridge logo" width="112">
+</p>
+
 # ThingsLocal Bridge
 
 Keep a Samsung SmartThings appliance working in Home Assistant without Samsung's
