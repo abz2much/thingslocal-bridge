@@ -5,7 +5,10 @@ import threading
 from uuid import UUID
 import paho.mqtt.client as mqtt
 from .settings import device_identifier
-from .controls import course_enabled
+from .controls import course_enabled, start_enabled
+from .engine import CONTROLS, engine_keys
+
+SPECS = {item.key: item for item in CONTROLS}
 
 
 def discovery_messages(identifier, base, device_config, entities):
@@ -78,6 +81,123 @@ class MQTTBridge:
         self._published_notification_id = None
         self._acknowledgement_handler = None
         self._acknowledgement_pending = False
+        self._start_enabled = start_enabled(device)
+        self.start_topic = self.base + '/command/start'
+        self._start_result = 'waiting_for_state'
+        self._start_handler = None
+        self._start_pending = False
+        self._engine_keys = engine_keys(device)
+        self.plain = config['mqtt'].get('namespace', 'thingslocal') + '/' + device['id']
+        self._engine = {}
+        self._engine_last = None
+        self._engine_handler = None
+        self._engine_pending = False
+
+    def engine_topic(self, key): return self.plain + '/' + key + '/set'
+
+    def set_engine_handler(self, handler): self._engine_handler = handler
+
+    def engine_done(self):
+        with self._lock: self._engine_pending = False
+
+    def reject_engine(self, key, reason):
+        with self._lock:
+            self._engine_last = key + ': ' + reason; self._revision += 1
+
+    def update_engine(self, snapshots):
+        with self._lock:
+            for key, current in snapshots.items():
+                old = self._engine.get(key, {})
+                if current['options'] != old.get('options'): self._refresh = True
+                if current['result'] != old.get('result') and current['result'] not in ('ready', 'waiting_for_state'):
+                    self._engine_last = key + ': ' + current['result']
+            self._engine = {key: dict(value) for key, value in snapshots.items()}
+            self._revision += 1
+
+    def _on_engine_message(self, message):
+        key = message.topic[len(self.plain) + 1:-len('/set')]
+        if key not in self._engine_keys or self._engine_handler is None: return
+        if message.retain: self.reject_engine(key, 'retained_replay_ignored'); return
+        if message.qos != 0: self.reject_engine(key, 'unsupported_qos'); return
+        if len(message.payload) > 64: self.reject_engine(key, 'invalid_payload'); return
+        try: text = message.payload.decode('utf-8')
+        except UnicodeDecodeError: self.reject_engine(key, 'invalid_payload'); return
+        with self._lock:
+            options = list(self._engine.get(key, {}).get('options', []))
+        platform = SPECS[key].platform
+        if platform == 'button':
+            if text != 'PRESS': self.reject_engine(key, 'invalid_payload'); return
+            value = True
+        elif platform == 'switch':
+            if text not in ('ON', 'OFF'): self.reject_engine(key, 'invalid_payload'); return
+            value = text == 'ON'
+        else:
+            if text not in options: self.reject_engine(key, 'unsupported_value'); return
+            value = text
+        with self._lock:
+            if self._engine_pending or not self._accept_commands:
+                self._engine_last = key + ': not_ready'; self._revision += 1; return
+            self._engine_pending = True
+            epoch, session = self._command_epoch, self._engine.get(key, {}).get('session')
+        try: self._engine_handler(key, value, epoch, session)
+        except RuntimeError:
+            self.engine_done(); self.reject_engine(key, 'disconnected')
+
+    def _publish_engine_discovery(self, client, device, engine):
+        if self.device['profile'] != 'dishwasher': return
+        for spec in CONTROLS:
+            topic = f'homeassistant/{spec.platform}/{self.identifier}/{spec.key}/config'
+            options = engine.get(spec.key, {}).get('options', [])
+            if spec.key not in self._engine_keys or (spec.platform == 'select' and not options):
+                client.publish(topic, '', qos=1, retain=True); continue
+            state = self.plain + '/' + spec.key
+            config = {'name': spec.name, 'unique_id': self.identifier + '_' + spec.key,
+                      'default_entity_id': spec.platform + '.' + self.identifier + '_' + spec.key,
+                      'device': device, 'command_topic': state + '/set',
+                      'retain': False, 'qos': 0, 'icon': spec.icon,
+                      'availability_mode': 'all',
+                      'availability': [{'topic': self.base + '/bridge_availability'},
+                                       {'topic': self.base + '/device_availability'},
+                                       {'topic': state + '/available'}]}
+            if spec.platform == 'button':
+                config['payload_press'] = 'PRESS'
+            else:
+                config.update(state_topic=state, optimistic=False)
+            if spec.platform == 'switch':
+                config.update(payload_on='ON', payload_off='OFF', state_on='ON', state_off='OFF')
+            elif spec.platform == 'select':
+                config['options'] = list(options)
+            client.publish(topic, json.dumps(config), qos=1, retain=True)
+        result_topic = f'homeassistant/sensor/{self.identifier}/control_result/config'
+        if self._engine_keys:
+            client.publish(result_topic, json.dumps({
+                'name': 'Control result', 'unique_id': self.identifier + '_control_result',
+                'default_entity_id': 'sensor.' + self.identifier + '_control_result', 'device': device,
+                'entity_category': 'diagnostic', 'state_topic': self.plain + '/last_result',
+                'availability_topic': self.base + '/bridge_availability'}), qos=1, retain=True)
+        else:
+            client.publish(result_topic, '', qos=1, retain=True)
+
+    def _publish_engine_state(self, client, engine, last):
+        for key in self._engine_keys:
+            current = engine.get(key)
+            if current is None: continue
+            topic, value = self.plain + '/' + key, current['value']
+            if SPECS[key].platform == 'switch' and isinstance(value, bool):
+                client.publish(topic, 'ON' if value else 'OFF', qos=0, retain=True)
+            elif SPECS[key].platform == 'select' and value in current['options']:
+                client.publish(topic, value, qos=0, retain=True)
+            client.publish(topic + '/available', 'online' if current['available'] else 'offline', qos=0, retain=True)
+        if self._engine_keys and last: client.publish(self.plain + '/last_result', last, qos=0, retain=True)
+
+    def set_start_handler(self, handler): self._start_handler = handler
+
+    def start_done(self):
+        with self._lock: self._start_pending = False
+
+    def update_start(self, result):
+        with self._lock:
+            self._start_result = result; self._revision += 1
 
     def set_acknowledgement_handler(self, handler): self._acknowledgement_handler = handler
 
@@ -134,6 +254,8 @@ class MQTTBridge:
             return
         client.subscribe('homeassistant/status', qos=1)
         if self._course_enabled: client.subscribe(self.command_topic, qos=0)
+        if self._start_enabled: client.subscribe(self.start_topic, qos=0)
+        for key in self._engine_keys: client.subscribe(self.engine_topic(key), qos=0)
         if self.device['profile'] == 'dishwasher': client.subscribe(self.base + '/notification_ack', qos=1)
         with self._lock:
             self._refresh = True; self._notification_refresh = True
@@ -161,6 +283,10 @@ class MQTTBridge:
             with self._lock:
                 self._refresh = True; self._notification_refresh = True
             return
+        if message.topic.startswith(self.plain + '/') and message.topic.endswith('/set'):
+            self._on_engine_message(message); return
+        if message.topic == self.start_topic:
+            self._on_start_message(message); return
         if message.topic != self.command_topic or not self._course_enabled or self._command_handler is None: return
         if message.retain:
             self.reject_command('retained_replay_ignored'); return
@@ -182,6 +308,20 @@ class MQTTBridge:
         except RuntimeError:
             self.command_done(); self.reject_command('disconnected')
 
+    def _on_start_message(self, message):
+        if not self._start_enabled or self._start_handler is None: return
+        if message.retain: self.update_start('retained_replay_ignored'); return
+        if message.qos != 0: self.update_start('unsupported_qos'); return
+        if message.payload != b'PRESS': self.update_start('invalid_payload'); return
+        with self._lock:
+            if self._start_pending or not self._accept_commands:
+                self._start_result = 'not_ready'; self._revision += 1; return
+            self._start_pending = True
+            epoch = self._command_epoch
+        try: self._start_handler(epoch)
+        except RuntimeError:
+            self.start_done(); self.update_start('disconnected')
+
     def _flush(self, client, sent_revision):
         with self._lock:
             values, online = dict(self._values), self._online
@@ -192,6 +332,8 @@ class MQTTBridge:
             notification = dict(self._notification) if self._notification else None
             notification_refresh = self._notification_refresh
             self._notification_refresh = False
+            start_result = self._start_result
+            engine, engine_last = {key: dict(value) for key, value in self._engine.items()}, self._engine_last
         if refresh:
             for topic, config in discovery_messages(self.identifier, self.base, self.device, entities):
                 client.publish(topic, json.dumps(config), qos=1, retain=True)
@@ -233,6 +375,28 @@ class MQTTBridge:
             else:
                 client.publish(select_topic, '', qos=1, retain=True)
                 client.publish(result_topic, '', qos=1, retain=True)
+            button_topic = f'homeassistant/button/{self.identifier}/start/config'
+            start_result_topic = f'homeassistant/sensor/{self.identifier}/start_result/config'
+            if self._start_enabled:
+                client.publish(button_topic, json.dumps({
+                    'name': 'Start', 'unique_id': self.identifier + '_start',
+                    'default_entity_id': 'button.' + self.identifier + '_start', 'device': device,
+                    'command_topic': self.start_topic, 'payload_press': 'PRESS',
+                    'retain': False, 'qos': 0, 'icon': 'mdi:play', 'availability_mode': 'all',
+                    'availability': [{'topic': self.base + '/' + topic} for topic in
+                                     ('bridge_availability', 'device_availability')],
+                }), qos=1, retain=True)
+                client.publish(start_result_topic, json.dumps({
+                    'name': 'Start result', 'unique_id': self.identifier + '_start_result',
+                    'default_entity_id': 'sensor.' + self.identifier + '_start_result',
+                    'device': device, 'entity_category': 'diagnostic',
+                    'state_topic': self.base + '/start_result',
+                    'availability_topic': self.base + '/bridge_availability',
+                }), qos=1, retain=True)
+            else:
+                client.publish(button_topic, '', qos=1, retain=True)
+                client.publish(start_result_topic, '', qos=1, retain=True)
+            self._publish_engine_discovery(client, device, engine)
         if refresh or revision != sent_revision:
             # State first: a new session clears per-field availability before
             # advertising it as connected. Missing values never become zero.
@@ -243,6 +407,9 @@ class MQTTBridge:
                 if control['value'] in options:
                     client.publish(self.base + '/washing_program', control['value'], qos=0, retain=True)
                 client.publish(self.base + '/program_selection_result', control['result'], qos=0, retain=True)
+            if self._start_enabled:
+                client.publish(self.base + '/start_result', start_result, qos=0, retain=True)
+            self._publish_engine_state(client, engine, engine_last)
             client.publish(self.base + '/program_availability',
                            'online' if self._course_enabled and control['available'] else 'offline', qos=0, retain=True)
             if self.device['profile'] == 'dishwasher':

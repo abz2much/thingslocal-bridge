@@ -41,6 +41,10 @@ def parsed(value, kind):
         if value in ('on', 'ON', 'open', 'locked') or value is True: return 'ON'
         if value in ('off', 'OFF', 'closed', 'unlocked') or value is False: return 'OFF'
         return None
+    if kind == 'flag':
+        if value is True or value == 'true': return 'ON'
+        if value is False or value == 'false': return 'OFF'
+        return None
     if kind == 'timestamp':
         if not isinstance(value, str): return None
         try: stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -71,6 +75,7 @@ DISHWASHER = {
     ('samsungce.dishwasherOperation', 'timeLeftToStart'): ('Time until start', 'number', {}),
     ('samsungce.dishwasherWashingCourse', 'washingCourse'): ('Washing course', 'scalar', {}),
     ('samsungce.dishwasherJobState', 'dishwasherJobState'): ('Detailed job state', 'text', {}),
+    ('remoteControlStatus', 'remoteControlEnabled'): ('Remote control enabled', 'flag', {}),
     ('custom.dishwasherOperatingProgress', 'dishwasherOperatingProgress'): ('Operating progress', 'scalar', {}),
 }
 UNITS = {'C': '°C', 'F': '°F', '°C': '°C', '°F': '°F', 'W': 'W', 'kW': 'kW',
@@ -147,7 +152,7 @@ class DeviceTelemetry:
             if extra.get('device_class') in ('temperature', 'power', 'energy') and 'unit_of_measurement' not in extra:
                 extra.pop('device_class')
             if extra.get('unit_of_measurement') in ('min', 's') and kind == 'number': extra.setdefault('device_class', 'duration')
-            self.entities[key] = Entity(key, name, 'binary_sensor' if kind == 'binary' else 'sensor', extra)
+            self.entities[key] = Entity(key, name, 'binary_sensor' if kind in ('binary', 'flag') else 'sensor', extra)
             value = parsed(event.get('value'), kind)
             if value is None: self.values.pop(key, None)
             else: self.values[key] = value

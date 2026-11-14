@@ -10,6 +10,7 @@ import tempfile
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from .engine import KEYS as CONTROL_KEYS
 
 SLUG = re.compile(r'[a-z][a-z0-9_-]{0,39}\Z')
 HOSTNAME = re.compile(r'(?=.{1,253}\Z)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}\Z')
@@ -72,11 +73,20 @@ def validate(config):
             raise ValueError('A verified three-digit setup ID is required; it is never guessed')
         if device['profile'] not in PROFILES: raise ValueError('Unknown readout profile')
         controls = device.get('controls', {})
-        if (not isinstance(controls, dict) or set(controls) - {'dishwasher_course'}
-                or any(type(value) is not bool for value in controls.values())):
-            raise ValueError('Only the boolean dishwasher_course control is supported')
+        flags = {'dishwasher_course', 'dishwasher_start'}
+        if (not isinstance(controls, dict) or set(controls) - (flags | {'dishwasher'})
+                or any(type(value) is not bool for key, value in controls.items() if key in flags)):
+            raise ValueError('Only the boolean dishwasher_course and dishwasher_start flags and the dishwasher list are supported')
+        listed = controls.get('dishwasher', [])
+        if (not isinstance(listed, list) or len(set(map(str, listed))) != len(listed)
+                or any(not isinstance(name, str) or name not in CONTROL_KEYS for name in listed)):
+            raise ValueError('The dishwasher controls must be a list of known, unique names')
+        if listed and device['profile'] != 'dishwasher':
+            raise ValueError('Dishwasher controls are supported only for dishwasher profiles')
         if controls.get('dishwasher_course') and device['profile'] != 'dishwasher':
             raise ValueError('Program selection is supported only for dishwasher profiles')
+        if controls.get('dishwasher_start') and device['profile'] != 'dishwasher':
+            raise ValueError('Remote start is supported only for dishwasher profiles')
         for value, seen in ((device['id'], seen_ids), (identity['serial'], seen_serials),
                             (device['ip'], seen_ips), (device['label'], seen_labels)):
             if value in seen: raise ValueError('Device IDs, serials, IPs and registration labels must be unique')
@@ -116,7 +126,8 @@ def runtime_config(config):
     for original in config['devices']:
         device = {key: original[key] for key in ('id', 'name', 'ip', 'label', 'profile',
                   'vendor_name', 'optional_components') if key in original}
-        device['controls'] = {key: original['controls'][key] for key in ('dishwasher_course',)
+        device['controls'] = {key: original['controls'][key]
+                              for key in ('dishwasher_course', 'dishwasher_start', 'dishwasher')
                               if key in original.get('controls', {})}
         device['identity'] = {key: original['identity'][key] for key in ('serial', 'manufacturer', 'model', 'setup_id')}
         device['entities'] = [{key: entity[key] for key in ('component', 'capability', 'attribute',

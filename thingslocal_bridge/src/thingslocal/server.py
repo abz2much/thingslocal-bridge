@@ -16,8 +16,10 @@ from .bridge import MQTTBridge
 from .security import verify_certificate
 from .settings import atomic_json, device_identifier, load_registry, validate, validate_registry
 from .telemetry import DeviceTelemetry
-from .controls import ControlRejected, DishwasherCourseControl, course_enabled
+from .controls import (START_COMMAND, ControlRejected, DishwasherCourseControl,
+                       DishwasherStartControl, course_enabled, start_enabled)
 from .diagnostics import DishwasherDiagnostics
+from .engine import DishwasherEngine, engine_enabled
 
 
 def redact(logger, method, event):
@@ -52,9 +54,9 @@ class ApplianceServer(MQTTServer):
             connection.thingslocal_session = structlog.get_context(connection._logger).get('connid')
         return client
 
-    def command_connection(self, device_id, session):
+    def command_connection(self, device_id, session, enabled=course_enabled):
         selected = next((device for device in self.config['devices'] if device['id'] == device_id), None)
-        if not selected or not course_enabled(selected) or session is None:
+        if not selected or not enabled(selected) or session is None:
             raise ControlRejected('control_disabled')
         matches = []
         for connection in self._connections:
@@ -71,9 +73,25 @@ class ApplianceServer(MQTTServer):
         if len(matches) != 1: raise ControlRejected('session_unavailable')
         return matches[0]
 
-    def command_ready(self, device_id, session):
-        try: self.command_connection(device_id, session); return True
+    def command_ready(self, device_id, session, enabled=course_enabled):
+        try: self.command_connection(device_id, session, enabled); return True
         except ControlRejected: return False
+
+    async def start_dishwasher(self, device_id, session):
+        connection, topic = self.command_connection(device_id, session, start_enabled)
+        component, capability, command, arguments = START_COMMAND
+        await connection.publish(topic, {'commands': [{
+            'component': component, 'capability': capability,
+            'command': command, 'arguments': list(arguments), 'id': str(uuid4()),
+        }]}, qos=1)
+
+    async def send_command(self, device_id, session, component, capability, command, arguments):
+        connection, topic = self.command_connection(
+            device_id, session, lambda device: device['profile'] == 'dishwasher')
+        await connection.publish(topic, {'commands': [{
+            'component': component, 'capability': capability, 'command': command,
+            'arguments': list(arguments), 'id': str(uuid4()),
+        }]}, qos=1)
 
     async def select_course(self, device_id, session, course):
         connection, topic = self.command_connection(device_id, session)
@@ -124,14 +142,14 @@ async def serve(config_path, directory):
     diagnostics = {device['id']: DishwasherDiagnostics(device_identifier(config, device), directory)
                    for device in config['devices'] if device['profile'] == 'dishwasher'}
     status = {'version': __version__, 'installation_id': config['installation_id'],
-              'listening': False, 'read_only': not any(course_enabled(d) for d in config['devices']),
+              'listening': False, 'read_only': not any(course_enabled(d) or start_enabled(d) or engine_enabled(d) for d in config['devices']),
               'certificate_expiry': expiry,
               'devices': {device['id']: {'registered': False, 'online': False,
                                        'tcp_connections': 0, 'tls_connections': 0,
                                        'tls_errors': [], 'event_batches': 0}
                           for device in config['devices']}}
     sessions = {}; server = None
-    controls = {}
+    controls = {}; starts = {}; engines = {}
 
     def save(): atomic_json(directory / 'status.json', status)
 
@@ -149,8 +167,23 @@ async def serve(config_path, directory):
     def update_control(device_id):
         bridges[device_id].update_control(controls[device_id].snapshot())
 
+    def update_start(device_id):
+        bridges[device_id].update_start(starts[device_id].result)
+
+    def update_engine(device_id):
+        bridges[device_id].update_engine(engines[device_id].snapshots())
+
     for device in config['devices']:
         device_id = device['id']
+        if engine_enabled(device):
+            engines[device_id] = DishwasherEngine(device,
+                lambda identifier=device_id: update_engine(identifier),
+                lambda session, identifier=device_id: server is not None and server.command_ready(
+                    identifier, session, lambda selected: selected['profile'] == 'dishwasher'))
+        if start_enabled(device):
+            starts[device_id] = DishwasherStartControl(device,
+                lambda identifier=device_id: update_start(identifier),
+                lambda session, identifier=device_id: server is not None and server.command_ready(identifier, session, start_enabled))
         if course_enabled(device):
             controls[device_id] = DishwasherCourseControl(device,
                 lambda identifier=device_id: update_control(identifier),
@@ -167,6 +200,10 @@ async def serve(config_path, directory):
                 update(device_id)
                 if device_id in controls:
                     controls[device_id].begin(session); update_control(device_id)
+                if device_id in starts:
+                    starts[device_id].begin(session); update_start(device_id)
+                if device_id in engines:
+                    engines[device_id].begin(session); update_engine(device_id)
         elif name == 'localthings.deviceevents' and session in sessions:
             device_id = sessions[session]; state = states[device_id]
             events = event.get('request', {}).get('deviceEvents', [])
@@ -176,6 +213,11 @@ async def serve(config_path, directory):
             if device_id in controls:
                 controls[device_id].accept(session, event.get('request', {}).get('deviceEvents', []))
                 update_control(device_id)
+            if device_id in starts:
+                starts[device_id].accept(session, event.get('request', {}).get('deviceEvents', []))
+                update_start(device_id)
+            if device_id in engines:
+                engines[device_id].accept(session, events); update_engine(device_id)
             status['devices'][device_id]['event_batches'] += 1
             atomic_json(directory / ('catalog-' + device_id + '.json'), list(state.catalog.values()))
             save()
@@ -186,6 +228,10 @@ async def serve(config_path, directory):
                 update(device_id)
             if device_id in controls:
                 controls[device_id].disconnect(session); update_control(device_id)
+            if device_id in starts:
+                starts[device_id].disconnect(session); update_start(device_id)
+            if device_id in engines:
+                engines[device_id].disconnect(session); update_engine(device_id)
         elif name == 'mqtt.SUBSCRIBE' and session in sessions:
             device_id = sessions[session]
             if device_id in controls: update_control(device_id)
@@ -226,6 +272,47 @@ async def serve(config_path, directory):
         task = asyncio.create_task(execute()); command_tasks.add(task)
         task.add_done_callback(command_tasks.discard)
 
+    def receive_start(device_id, epoch):
+        bridge, control = bridges[device_id], starts[device_id]
+        if stopped.is_set() or not bridge.command_current(epoch):
+            bridge.update_start('session_changed'); bridge.start_done(); return
+
+        async def send(session):
+            if stopped.is_set() or not bridge.command_current(epoch) or control.session != session:
+                raise ControlRejected('session_changed')
+            await server.start_dishwasher(device_id, session)
+
+        async def execute():
+            try: await control.start(send)
+            except Exception:
+                logging.getLogger('thingslocal').exception('Remote start handler failed')
+                bridge.update_start('internal_error')
+            finally: bridge.start_done()
+
+        task = asyncio.create_task(execute()); command_tasks.add(task)
+        task.add_done_callback(command_tasks.discard)
+
+    def receive_engine(device_id, key, value, epoch, session):
+        bridge, control = bridges[device_id], engines[device_id].controls[key]
+        if stopped.is_set() or not bridge.command_current(epoch) or control.session != session:
+            bridge.reject_engine(key, 'session_changed'); bridge.engine_done(); return
+
+        async def send(current_session, capability, command, arguments):
+            if (stopped.is_set() or not bridge.command_current(epoch)
+                    or current_session != session or control.session != session):
+                raise ControlRejected('session_changed')
+            await server.send_command(device_id, session, 'main', capability, command, arguments)
+
+        async def execute():
+            try: await control.set(value, send)
+            except Exception:
+                logging.getLogger('thingslocal').exception('Dishwasher control handler failed')
+                bridge.reject_engine(key, 'internal_error')
+            finally: bridge.engine_done()
+
+        task = asyncio.create_task(execute()); command_tasks.add(task)
+        task.add_done_callback(command_tasks.discard)
+
     def receive_acknowledgement(device_id, identifier):
         try:
             diagnostics[device_id].acknowledge(identifier)
@@ -241,6 +328,14 @@ async def serve(config_path, directory):
         bridges[device_id].set_command_handler(
             lambda course, epoch, session, identifier=device_id:
                 loop.call_soon_threadsafe(receive_course, identifier, course, epoch, session))
+    for device_id in starts:
+        bridges[device_id].set_start_handler(
+            lambda epoch, identifier=device_id:
+                loop.call_soon_threadsafe(receive_start, identifier, epoch))
+    for device_id in engines:
+        bridges[device_id].set_engine_handler(
+            lambda key, value, epoch, session, identifier=device_id:
+                loop.call_soon_threadsafe(receive_engine, identifier, key, value, epoch, session))
     for sig in (signal.SIGINT, signal.SIGTERM): loop.add_signal_handler(sig, stopped.set)
     for device_id, bridge in bridges.items():
         if device_id in diagnostics: bridge.update_notification(diagnostics[device_id].notification)
@@ -256,6 +351,11 @@ async def serve(config_path, directory):
         await asyncio.gather(*command_tasks, return_exceptions=True)
         for device_id, control in controls.items():
             control.disconnect(control.session); update_control(device_id)
+        for device_id, start in starts.items():
+            start.disconnect(start.session); update_start(device_id)
+        for device_id, engine in engines.items():
+            for control in engine.controls.values(): control.disconnect(control.session)
+            update_engine(device_id)
         for device_id, state in states.items(): bridges[device_id].update({}, False, state.entities)
         await asyncio.gather(*(asyncio.to_thread(bridge.stop) for bridge in bridges.values()))
         status['listening'] = False
