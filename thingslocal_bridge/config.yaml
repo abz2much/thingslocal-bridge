@@ -1,7 +1,7 @@
 name: ThingsLocal Bridge
 version: "0.2.0"
 slug: thingslocal_bridge
-url: https://github.com/jmguzik/thingslocal-bridge
+url: https://github.com/abz2much/thingslocal-bridge
 description: Local STDK monitoring, dishwasher notifications and optional program selection.
 arch: [amd64, aarch64]
 startup: services

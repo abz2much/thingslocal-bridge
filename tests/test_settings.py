@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from fixtures import configuration, registration
-from thingslocal.settings import atomic_json, device_identifier, load_registry, validate
+from thingslocal.settings import atomic_json, device_identifier, load_registry, runtime_config, validate
 
 
 class ConfigTests(unittest.TestCase):
@@ -35,6 +35,27 @@ class ConfigTests(unittest.TestCase):
         config = configuration(); config['devices'][0]['entities'] = [
             {'platform': 'switch', 'component': 'main', 'capability': 'switch', 'attribute': 'switch'}]
         with self.assertRaises(ValueError): validate(config)
+
+    def test_dishwasher_control_list_accepts_known_unique_keys_only(self):
+        config = configuration(); config['devices'][1]['controls'] = {
+            'dishwasher_start': True, 'dishwasher': ['sanitize', 'mute']}
+        self.assertEqual(validate(config)['devices'][1]['controls']['dishwasher'], ['sanitize', 'mute'])
+        for bad in (['nonsense'], ['mute', 'mute'], 'mute', [5], True):
+            config = configuration(); config['devices'][1]['controls'] = {'dishwasher': bad}
+            with self.subTest(bad=bad), self.assertRaises(ValueError): validate(config)
+        config = configuration(); config['devices'][0]['controls'] = {'dishwasher': ['mute']}
+        with self.assertRaises(ValueError): validate(config)
+        config = configuration(); config['devices'][1]['controls'] = {'dishwasher_start': 'true'}
+        with self.assertRaises(ValueError): validate(config)
+
+    def test_button_names_are_accepted_in_the_dishwasher_list(self):
+        config = configuration(); config['devices'][1]['controls'] = {'dishwasher': ['pause', 'resume', 'cancel']}
+        self.assertEqual(validate(config)['devices'][1]['controls']['dishwasher'], ['pause', 'resume', 'cancel'])
+
+    def test_runtime_export_keeps_the_dishwasher_control_list(self):
+        config = configuration(); config['devices'][1]['controls'] = {'dishwasher': ['sanitize', 'door_release']}
+        exported = runtime_config(validate(config))['devices'][1]['controls']
+        self.assertEqual(exported, {'dishwasher': ['sanitize', 'door_release']})
 
     def test_registry_restores_two_identities_and_rejects_foreign_or_duplicate_records(self):
         config = configuration(); records = [registration(item) for item in config['devices']]

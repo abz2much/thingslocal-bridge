@@ -11,13 +11,14 @@ requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE", "UPSTREAM.md"]
 authors = [{name = "purplesym (Lars) and LocalThings contributors — original LocalThings"}]
-maintainers = [{name = "jmguzik — ThingsLocal Bridge continuation"}]
+maintainers = [{name = "abz2much"}]
 dependencies = ["paho-mqtt==2.1.0", "structlog==26.1.0"]
 
 [project.urls]
-Homepage = "https://github.com/jmguzik/thingslocal-bridge"
-Repository = "https://github.com/jmguzik/thingslocal-bridge"
-Issues = "https://github.com/jmguzik/thingslocal-bridge/issues"
+Homepage = "https://github.com/abz2much/thingslocal-bridge"
+Repository = "https://github.com/abz2much/thingslocal-bridge"
+Issues = "https://github.com/abz2much/thingslocal-bridge/issues"
+Continued-from = "https://github.com/jmguzik/thingslocal-bridge"
 Upstream = "https://codeberg.org/purplesym/localthings"
 
 [project.optional-dependencies]

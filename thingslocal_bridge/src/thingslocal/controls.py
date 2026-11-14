@@ -1,5 +1,6 @@
 """Opt-in dishwasher program selection, confirmed by fresh appliance reports."""
 import asyncio
+import logging
 import re
 
 COURSE = ('samsungce.dishwasherWashingCourse', 'washingCourse')
@@ -7,11 +8,22 @@ OPTIONS = ('samsungce.dishwasherWashingCourse', 'supportedCourses')
 POWER = ('switch', 'switch')
 OPERATION = ('samsungce.dishwasherOperation', 'operatingState')
 JOB = ('samsungce.dishwasherJobState', 'dishwasherJobState')
+REMOTE_CONTROL = ('remoteControlStatus', 'remoteControlEnabled')
+# UNVERIFIED over the local connection. This is the standard SmartThings
+# capability command that Home Assistant's SmartThings select sends as "run",
+# which starts this dishwasher through the cloud today. The alternative is
+# ('main', 'samsungce.dishwasherOperation', 'start', []), whose arguments the
+# upstream notes do not settle. Change it only here.
+START_COMMAND = ('main', 'dishwasherOperatingState', 'setMachineState', ['run'])
 TOKEN = re.compile(r'[A-Za-z0-9_.-]{1,64}\Z')
 
 
 def course_enabled(device):
     return device['profile'] == 'dishwasher' and device.get('controls', {}).get('dishwasher_course') is True
+
+
+def start_enabled(device):
+    return device['profile'] == 'dishwasher' and device.get('controls', {}).get('dishwasher_start') is True
 
 
 class ControlRejected(Exception):
@@ -101,3 +113,58 @@ class DishwasherCourseControl:
             elif not future.cancelled(): future.exception()
             if self.pending is pending: self.pending = None
             self.changed()
+
+
+class DishwasherStartControl:
+    """Opt-in remote start. Sends only when this session reports remote control as enabled."""
+
+    def __init__(self, device, changed, connection_ready):
+        self.enabled = start_enabled(device)
+        self.changed, self.connection_ready = changed, connection_ready
+        self.session = None
+        self.remote = None
+        self.sent = False
+        self.busy = False
+        self.result = 'waiting_for_state'
+
+    def begin(self, session):
+        self.session = session; self.remote = None; self.sent = False
+        self.result = 'waiting_for_state'
+
+    def disconnect(self, session):
+        if session != self.session: return
+        self.session = None; self.remote = None; self.sent = False; self.result = 'disconnected'
+
+    def accept(self, session, events):
+        if session != self.session or session is None or not isinstance(events, list): return
+        for event in events:
+            if not isinstance(event, dict) or event.get('component') != 'main': continue
+            key, value = (event.get('capability'), event.get('attribute')), event.get('value')
+            if key == REMOTE_CONTROL:
+                self.remote = True if value in (True, 'true') else False if value in (False, 'false') else None
+            elif key == OPERATION and isinstance(value, str) and TOKEN.fullmatch(value):
+                self.sent = False
+
+    def _refuse(self, reason):
+        self.result = reason; self.changed()
+        logging.getLogger('thingslocal').warning('Remote start refused: %s', reason)
+
+    async def start(self, send):
+        if not self.enabled: return self._refuse('control_disabled')
+        if self.busy: return self._refuse('already_sent')
+        if self.session is None or not self.connection_ready(self.session):
+            return self._refuse('not_connected')
+        if self.sent: return self._refuse('already_sent')
+        if self.remote is None: return self._refuse('remote_control_unknown')
+        if self.remote is False: return self._refuse('remote_control_disabled')
+        session = self.session; self.busy = True
+        try:
+            await send(session)
+            self.sent = True; self.result = 'sent_unconfirmed'
+            logging.getLogger('thingslocal').warning('Remote start command sent; no acknowledgement exists')
+        except ControlRejected as error:
+            self.result = str(error)
+        except (OSError, ValueError):
+            self.sent = True; self.result = 'send_failed_unknown'
+        finally:
+            self.busy = False; self.changed()

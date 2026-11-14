@@ -10,6 +10,10 @@ Assistant packaging, guided setup, multi-appliance monitoring, optional dishwash
 program selection and notification routing. See [UPSTREAM.md](UPSTREAM.md) for
 the original sources and the changes made here.
 
+This repository continues [jmguzik's ThingsLocal Bridge](https://github.com/jmguzik/thingslocal-bridge),
+which is itself a continuation of LocalThings. Their credit, and the original
+authors', stay in place.
+
 **Local monitoring for compatible SmartThings STDK MQTT appliances, with optional
 dishwasher program selection.**
 
@@ -17,7 +21,10 @@ Run one local endpoint for several appliances and expose their reported values
 through the standard Home Assistant MQTT integration. Device identities,
 registration, state sessions and discovery namespaces remain separate.
 Appliances are read-only by default. Program selection is an explicit per-device
-opt-in for dishwashers; it does not start a wash.
+opt-in for dishwashers; it does not start a wash. Remote start is a separate
+opt-in for dishwashers, confirmed on one real dishwasher (DW60A8050FS/EF) on
+14 November 2026. Option controls (Sanitize, Speed booster, Selected zone, auto
+door release, mute) are a third opt-in, proven on the same machine.
 
 This is an experimental community project, unaffiliated with Samsung or
 SmartThings. It uses [purplesym's LocalThings](https://codeberg.org/purplesym/localthings)
@@ -60,6 +67,8 @@ attributes are catalogued by **name/type/unit only**, without their values.
   routine monitoring does not call the SmartThings API.
 - A Linux setup computer with NetworkManager, a Wi-Fi adapter, a systemd user
   session, Python 3.11+, OpenSSL 3, and Node.js/npm for the optional official login.
+  A Mac can also be the setup computer for the pairing step: see
+  [macOS setup computer](#macos-setup-computer).
 - Home Assistant OS, access to its local-apps/share folders, and a working HA MQTT
   integration/broker. The official Mosquitto app is a suitable choice.
 - DHCP reservations for the endpoint and **every** appliance.
@@ -72,7 +81,7 @@ and restart the app. Expiry is exposed as a diagnostic HA entity.
 Start from a checkout of this repository:
 
 ```sh
-git clone https://github.com/jmguzik/thingslocal-bridge.git
+git clone https://github.com/abz2much/thingslocal-bridge.git
 cd thingslocal-bridge
 ```
 
@@ -151,10 +160,10 @@ private access. Do not put them in `www`, the local app source or a Git checkout
 Add this repository under **Settings → Apps → Install app → Repositories**:
 
 ```text
-https://github.com/jmguzik/thingslocal-bridge
+https://github.com/abz2much/thingslocal-bridge
 ```
 
-[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fjmguzik%2Fthingslocal-bridge)
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fabz2much%2Fthingslocal-bridge)
 
 Install **ThingsLocal Bridge** from that repository. Set its `workspace` option to
 the private runtime directory prepared above, then start it and enable
@@ -218,6 +227,29 @@ devices: export the updated configuration into a new empty export directory,
 copy those files over the runtime configuration, **preserve the HA `state/`
 folder**, restart the app and then pair the added appliance.
 
+#### macOS setup computer
+
+On a Mac, `pair` works with a **manual join**. The tool does not change your
+Wi-Fi itself. It needs no `sudo`, no extra packages and no Location permission.
+This path worked once on a real Mac with a DW60A8050FS/EF dishwasher (14 November 2026).
+Other Macs and models are unconfirmed.
+
+1. Put the appliance in its pairing mode, as above.
+2. Run `pair YOUR_DEVICE_ID`. If you have more than one Wi-Fi interface, add
+   `--interface en0` (or the right name).
+3. The tool tells you to join the appliance's setup network from the Wi-Fi
+   menu. Its name has `_E4` or `_E5` in it. The password is
+   `1111122222`. Ignore any "no internet" warning.
+4. Press Enter in the terminal.
+5. The tool checks that the router answers on port 8888. If it does not, it
+   says so and stops. It sends nothing.
+6. After pairing, the appliance's network goes away. The tool waits up to 60
+   seconds for your normal network to return. If it does not, choose your
+   Wi-Fi from the menu yourself.
+
+`scan` is not supported on macOS. Look for the appliance's network in the
+Wi-Fi menu instead.
+
 ## Readouts and availability
 
 - Each configured appliance has its own HA device, registration and state session.
@@ -263,8 +295,8 @@ subscription. It becomes unavailable during a pending change, while busy/off,
 or after disconnect. Normal telemetry remains available independently.
 
 The only permitted command is `samsungce.dishwasherWashingCourse.setWashingCourse`.
-**It selects a program without starting a wash.** There are no start, pause,
-cancel, power or cooktop controls. The displayed selection follows device reports,
+**It selects a program without starting a wash.** Program selection has no start,
+pause, cancel, power or cooktop controls. The displayed selection follows device reports,
 not a predicted result. A request waits up to ten seconds for a fresh matching
 report. A timeout means **outcome unknown**; the selector then waits for another
 program report or a fresh connection before accepting more requests.
@@ -276,6 +308,67 @@ is rejected or not confirmed. Do not automatically repeat unknown-outcome reques
 
 Set the flag to `false` or remove it and restart to return the device to read-only
 operation. Its command subscription and selector discovery are then removed.
+
+## Optional dishwasher remote start
+
+Remote start is a second, separate opt-in for dishwashers:
+
+```json
+{"controls": {"dishwasher_start": true}}
+```
+
+It adds a **Start** button and a **Start result** diagnostic in Home Assistant.
+It sends one command, `dishwasherOperatingState.setMachineState("run")`, and only when the
+dishwasher has reported remote control as enabled in the current connection. The
+dishwasher's own remote control setting must be armed at the machine. There is no
+stop, cancel, pause, resume or power command, and nothing for cooktops.
+
+**Confirmed on one DW60A8050FS/EF (14 November 2026): it started a wash.** The
+appliance sends no acknowledgement, so the result is `sent_unconfirmed`, never
+"started". Starting an appliance unattended is your responsibility. See
+`docs/configuration.md` for the guard, the result values and the first-test steps.
+
+## Optional dishwasher option controls
+
+A third opt-in lists the controls to enable, by name:
+
+```json
+{"controls": {"dishwasher": ["sanitize", "speed_booster", "selected_zone", "door_release", "mute"]}}
+```
+
+| Name | Home Assistant entity | What it sends |
+| --- | --- | --- |
+| `sanitize` | switch | `setOptions` with `{"sanitize": true or false}` |
+| `speed_booster` | switch | `setOptions` with `{"speedBooster": true or false}` |
+| `selected_zone` | select (`all`, `lower`) | `setOptions` with `{"selectedZone": "..."}` |
+| `door_release` | switch | `autoDoorRelease` `enable` or `disable` |
+| `mute` | switch | `audioMute` `mute` or `unmute` |
+| `pause` | button | `dishwasherOperatingState` `setMachineState` `["pause"]` |
+| `resume` | button | `dishwasherOperatingState` `setMachineState` `["run"]` |
+| `cancel` | button | `samsungce.dishwasherOperation` `cancel` (ends the wash; the dishwasher drains) |
+
+The three option controls work only while the dishwasher is on and idle, and only
+for values the current wash course allows (the dishwasher reports what is settable).
+Door release and mute need only a live connection. This dishwasher reports them
+only after they change, so they show no state until the first change. Only one command may be pending
+at a time and nothing is queued or retried. The dishwasher does not acknowledge
+commands, so a change counts as done only when its next report shows it. A
+**Control result** diagnostic shows the last result, for example `confirmed` or
+`not_settable`. Plain topics are also published for other tools:
+`<namespace>/<device id>/<name>` for state (`ON` or `OFF`, or the option) and
+`<namespace>/<device id>/<name>/set` for commands (QoS 0, not retained).
+
+The three buttons are available only while the dishwasher is in the right state
+(pause while running, resume while paused, cancel while running or paused) **and
+remote control is reported on**. This dishwasher reports remote control only after it
+is changed at the machine, so after an app restart the buttons stay unavailable until
+then. A press counts as done when the operating state reaches paused, running or
+ready. Cancel ends a wash, so you may want Home Assistant to ask for confirmation.
+
+**Proven on one DW60A8050FS/EF (14 November 2026).** The single setters
+(`setSanitize` and the others) are ignored by this dishwasher; only `setOptions`
+works. Options worked with remote control off. Other models are unconfirmed.
+Pause, resume and cancel were proven by command; the buttons themselves are new. Delayed start (`startLater`, in seconds) and power are not controls yet.
 
 ## Dishwasher attention and cleaning notifications
 

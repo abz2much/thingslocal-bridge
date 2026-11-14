@@ -8,7 +8,8 @@ import urllib.error
 import urllib.request
 
 from .cloud import NoRedirect, serial_hash
-from .network import APSession, scan
+from . import network_select
+from .network_macos import ScanUnsupported
 from .security import verify_certificate, verify_route
 from .settings import atomic_json, private_ip
 
@@ -88,11 +89,15 @@ def pair(workspace, config, device, interface=None):
     wifi = config['wifi']
     if not isinstance(wifi.get('ssid'), str) or not wifi['ssid'] or not isinstance(wifi.get('password'), str):
         raise ValueError('Supply your own target Wi-Fi credentials first')
-    networks = scan(device['identity'])
+    backend = network_select.backend()
+    try:
+        networks = backend.scan(device['identity'])
+    except ScanUnsupported:
+        networks = [None]
     if not networks: raise ValueError('No matching appliance AP is visible; enable its documented pairing mode')
     result = {'device': device['id'], 'identity_verified': False, 'write_started': False,
               'configured': False, 'network_restored': False}
-    network = APSession(networks[0], interface)
+    network = backend.APSession(networks[0], interface)
     try:
         with network:
             session = SetupSession(network.gateway, material, config.get('timezone', 'UTC'))
@@ -104,5 +109,7 @@ def pair(workspace, config, device, interface=None):
     finally:
         result['network_restored'] = network.restored
         atomic_json(workspace / ('pairing-' + device['id'] + '.json'), result)
-    if not network.restored: raise ValueError('Automatic restoration failed; the independent restore timer remains active')
+    if not network.restored:
+        raise ValueError(getattr(network, 'not_restored_message',
+            'Automatic restoration failed; the independent restore timer remains active'))
     return result
